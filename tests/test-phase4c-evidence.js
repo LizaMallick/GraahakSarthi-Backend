@@ -92,7 +92,17 @@ async function runPhase4CTests() {
     // Helper: Upload a document to a case
     async function uploadDoc(caseId, docType, filename, mimeType, description = null) {
       const form = new FormData();
-      const content = Buffer.from(`Sample test payload for ${docType}`);
+      let content;
+      if (mimeType === 'image/png' || filename.endsWith('.png')) {
+        // Valid PNG magic signature: 0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A
+        content = Buffer.concat([
+          Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+          Buffer.from(`Sample PNG payload for ${docType}`),
+        ]);
+      } else {
+        // Valid PDF magic signature: %PDF-
+        content = Buffer.from(`%PDF-1.4\nSample test payload for ${docType}\n%%EOF`);
+      }
       const blob = new Blob([content], { type: mimeType });
       form.append('file', blob, filename);
       form.append('document_type', docType);

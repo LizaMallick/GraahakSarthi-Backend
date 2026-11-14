@@ -11,16 +11,17 @@ if (!fs.existsSync(uploadDir)) {
 // Configurable file size limit (default 10MB)
 const maxFileSize = parseInt(process.env.MAX_FILE_SIZE_BYTES, 10) || 10 * 1024 * 1024;
 
-// Allowed MIME types: PDF, PNG, JPG/JPEG
+// Allowed MIME types: PDF, PNG, JPG/JPEG, WEBP
 const ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'image/png',
   'image/jpeg',
   'image/jpg',
+  'image/webp',
 ]);
 
 // Allowed file extensions
-const ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg']);
+const ALLOWED_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp']);
 
 // Disk storage engine with collision-resistant naming
 const storage = multer.diskStorage({
@@ -43,7 +44,7 @@ const fileFilter = (req, file, cb) => {
   if (isMimeValid && isExtValid) {
     cb(null, true);
   } else {
-    const error = new Error('Invalid file type. Only PDF, PNG, and JPG/JPEG files are accepted as case evidence.');
+    const error = new Error('Invalid file type. Only PDF, PNG, JPG/JPEG, and WEBP files are accepted as case evidence.');
     error.code = 'INVALID_FILE_TYPE';
     cb(error, false);
   }

@@ -92,3 +92,34 @@ CREATE TABLE IF NOT EXISTS `case_timeline_events` (
     ON DELETE SET NULL
     ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ------------------------------------------------------------------------------
+-- 5. Case Loss Calculations Table (Phase 6)
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `case_loss_calculations` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `case_id` BIGINT NOT NULL,
+  `purchase_amount` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `delivery_installation_charges` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `repair_replacement_expenses` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `travel_communication_expenses` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `other_documented_expenses` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `refunds_received` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `gross_loss` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `net_loss` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `annual_interest_rate` DECIMAL(5, 2) NULL DEFAULT NULL,
+  `interest_start_date` DATE NULL DEFAULT NULL,
+  `interest_end_date` DATE NULL DEFAULT NULL,
+  `interest_days` INT NULL DEFAULT 0,
+  `estimated_interest` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `total_estimated_claim` DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
+  `expense_breakdown` JSON NULL,
+  `calculation_notes` TEXT NULL,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_case_loss_case_id` (`case_id`),
+  INDEX `idx_case_loss_created_at` (`created_at`),
+  CONSTRAINT `fk_case_loss_case_id`
+    FOREIGN KEY (`case_id`) REFERENCES `cases` (`id`)
+    ON DELETE CASCADE
+    ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -105,10 +105,44 @@ class CaseController {
         data: updatedCase,
       });
     } catch (error) {
-      console.error('[CaseController.updateCase Error]:', error);
+      const status = error.statusCode || 500;
+      if (status >= 500) {
+        console.error('[CaseController.updateCase Error]:', error);
+      } else {
+        console.warn(`[CaseController.updateCase Warning] ${status}:`, error.message);
+      }
       return errorResponse(res, {
-        statusCode: 500,
-        message: 'Failed to update case.',
+        statusCode: status,
+        message: error.message || 'Failed to update case.',
+        error: error.message,
+      });
+    }
+  }
+
+  /**
+   * DELETE /api/cases/:id
+   * Delete a case, cascade-clean all child records, and unlink physical files.
+   */
+  static async deleteCase(req, res) {
+    try {
+      const { id } = req.params;
+      const result = await CaseService.deleteCase(id);
+
+      return successResponse(res, {
+        statusCode: 200,
+        message: 'Case and all associated documents deleted successfully.',
+        data: result,
+      });
+    } catch (error) {
+      const status = error.statusCode || 500;
+      if (status >= 500) {
+        console.error('[CaseController.deleteCase Error]:', error);
+      } else {
+        console.warn(`[CaseController.deleteCase Warning] ${status}:`, error.message);
+      }
+      return errorResponse(res, {
+        statusCode: status,
+        message: error.message || 'Failed to delete case.',
         error: error.message,
       });
     }

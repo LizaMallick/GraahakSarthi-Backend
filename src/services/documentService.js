@@ -1,7 +1,9 @@
 const path = require('path');
 const fs = require('fs');
+const pool = require('../config/db');
 const DocumentModel = require('../models/documentModel');
 const CaseModel = require('../models/caseModel');
+const TimelineService = require('./timelineService');
 
 /**
  * Service Layer for Case Document Management.
@@ -10,7 +12,8 @@ const CaseModel = require('../models/caseModel');
 class DocumentService {
   /**
    * Upload and register a document for a case.
-   * Cleans up physical file if case lookup or DB insertion fails.
+   * Atomically records document metadata and DOCUMENT_UPLOAD milestone in a single transaction.
+   * Cleans up physical file if case lookup, database insertion, or timeline recording fails.
    */
   static async uploadDocument({ caseId, file, documentType, description }) {
     // 1. Verify that the parent case exists
@@ -28,8 +31,11 @@ class DocumentService {
       throw error;
     }
 
-    // 2. Persist metadata in database
+    // 2. Persist document metadata and automatic timeline milestone within a single transaction
+    const connection = await pool.getConnection();
     try {
+      await connection.beginTransaction();
+
       const docRecord = await DocumentModel.createDocument({
         case_id: caseId,
         original_filename: file.originalname,
@@ -39,14 +45,24 @@ class DocumentService {
         file_size: file.size,
         document_type: documentType || 'OTHER',
         description: description || null,
-      });
+      }, connection);
+
+      // Automatically record milestone for document upload using the same transaction connection
+      await TimelineService.recordDocumentUploadMilestone({
+        caseId,
+        document: docRecord,
+      }, connection);
+
+      await connection.commit();
 
       // 3. Return sanitized response (never expose absolute filesystem paths)
       const sanitized = { ...docRecord };
       delete sanitized.file_path;
       return sanitized;
     } catch (dbError) {
-      // Clean up physical file on database failure
+      await connection.rollback();
+
+      // Clean up physical file on database or transaction failure
       if (file && file.path) {
         try {
           await fs.promises.unlink(file.path);
@@ -55,6 +71,8 @@ class DocumentService {
         }
       }
       throw dbError;
+    } finally {
+      connection.release();
     }
   }
 
@@ -168,6 +186,121 @@ class DocumentService {
       id: docId,
       case_id: caseId,
     };
+  }
+
+  /**
+   * Retrieve file path and metadata for preview or download.
+   * Enforces strict case association and canonical directory containment.
+   */
+  static async getDocumentFile({ caseId, docId }) {
+    // 1. Verify case exists
+    const caseItem = await CaseModel.findById(caseId);
+    if (!caseItem) {
+      const error = new Error(`Case with ID ${caseId} not found.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 2. Verify document exists
+    const document = await DocumentModel.findById(docId);
+    if (!document) {
+      const error = new Error(`Document with ID ${docId} not found.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 3. Verify Case Association (IDOR protection)
+    if (String(document.case_id) !== String(caseId)) {
+      const error = new Error(`Document with ID ${docId} does not belong to case ${caseId}.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 4. Safe Path Containment Check
+    const uploadDirConfig = process.env.UPLOAD_DIR || 'uploads';
+    const uploadDirResolved = path.resolve(uploadDirConfig);
+    const targetFileResolved = path.resolve(document.file_path);
+
+    const lexicalRelative = path.relative(uploadDirResolved, targetFileResolved);
+    if (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)) {
+      const error = new Error('Security Violation: File path is outside designated uploads directory.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    let realUploadDir = uploadDirResolved;
+    try {
+      realUploadDir = await fs.promises.realpath(uploadDirResolved);
+    } catch (e) {
+      realUploadDir = uploadDirResolved;
+    }
+
+    let realTargetFile = targetFileResolved;
+    try {
+      realTargetFile = await fs.promises.realpath(targetFileResolved);
+      const canonicalRelative = path.relative(realUploadDir, realTargetFile);
+      if (canonicalRelative.startsWith('..') || path.isAbsolute(canonicalRelative)) {
+        const error = new Error('Security Violation: File path escapes uploads directory via symlink.');
+        error.statusCode = 400;
+        throw error;
+      }
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        const error = new Error('Document file is missing from disk.');
+        error.statusCode = 404;
+        throw error;
+      }
+      throw err;
+    }
+
+    return {
+      filePath: realTargetFile,
+      mimeType: document.mime_type || 'application/octet-stream',
+      originalFilename: document.original_filename,
+      fileSize: document.file_size,
+    };
+  }
+
+  /**
+   * Update document metadata (document_type and/or description).
+   * Enforces case association and returns sanitized metadata without file_path.
+   */
+  static async updateDocumentMetadata({ caseId, docId, documentType, description }) {
+    // 1. Verify case exists
+    const caseItem = await CaseModel.findById(caseId);
+    if (!caseItem) {
+      const error = new Error(`Case with ID ${caseId} not found.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 2. Verify document exists and belongs to case
+    const document = await DocumentModel.findById(docId);
+    if (!document) {
+      const error = new Error(`Document with ID ${docId} not found.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (String(document.case_id) !== String(caseId)) {
+      const error = new Error(`Document with ID ${docId} does not belong to case ${caseId}.`);
+      error.statusCode = 404;
+      throw error;
+    }
+
+    // 3. Update metadata
+    const fieldsToUpdate = {};
+    if (documentType !== undefined) {
+      fieldsToUpdate.document_type = documentType;
+    }
+    if (description !== undefined) {
+      fieldsToUpdate.description = description;
+    }
+
+    const updated = await DocumentModel.updateMetadataByIdAndCaseId(docId, caseId, fieldsToUpdate);
+    const sanitized = { ...updated };
+    delete sanitized.file_path;
+    return sanitized;
   }
 }
 

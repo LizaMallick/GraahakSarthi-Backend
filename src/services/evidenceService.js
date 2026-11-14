@@ -1,15 +1,19 @@
+const pool = require('../config/db');
 const CaseModel = require('../models/caseModel');
 const DocumentModel = require('../models/documentModel');
 const EvidenceModel = require('../models/evidenceModel');
+const TimelineService = require('./timelineService');
 const { evaluateCaseEvidence, DISCLAIMER } = require('./evidenceEngine');
 
 /**
  * Service Layer for Evidence Strength & Missing-Proof Evaluation.
  * Orchestrates case data, document models, and the rule-based evidence engine.
+ * Manages database transactions for atomic evaluation snapshot and milestone recording.
  */
 class EvidenceService {
   /**
    * Run the rule-based evidence evaluation engine for a case and persist snapshot.
+   * Atomically saves evaluation record and EVIDENCE_EVALUATION milestone within a single transaction.
    */
   static async evaluateCaseEvidence(caseId) {
     // 1. Verify that the case exists
@@ -29,15 +33,34 @@ class EvidenceService {
       documents,
     });
 
-    // 4. Persist snapshot in evidence_evaluations table
-    const savedSnapshot = await EvidenceModel.createEvaluation({
-      case_id: caseId,
-      strength_score: evaluation.evidence_coverage_score,
-      strength_level: evaluation.coverage_level,
-      verified_proofs: evaluation.provided_proofs,
-      missing_proofs: evaluation.missing_proofs,
-      recommendations: evaluation.recommendations,
-    });
+    // 4. Persist snapshot and timeline milestone within a single transaction
+    const connection = await pool.getConnection();
+    let savedSnapshot;
+    try {
+      await connection.beginTransaction();
+
+      savedSnapshot = await EvidenceModel.createEvaluation({
+        case_id: caseId,
+        strength_score: evaluation.evidence_coverage_score,
+        strength_level: evaluation.coverage_level,
+        verified_proofs: evaluation.provided_proofs,
+        missing_proofs: evaluation.missing_proofs,
+        recommendations: evaluation.recommendations,
+      }, connection);
+
+      // Automatically record milestone for evidence evaluation using the same transaction connection
+      await TimelineService.recordEvidenceEvaluationMilestone({
+        caseId,
+        evaluation,
+      }, connection);
+
+      await connection.commit();
+    } catch (dbError) {
+      await connection.rollback();
+      throw dbError;
+    } finally {
+      connection.release();
+    }
 
     return {
       case_id: String(caseId),
@@ -55,7 +78,7 @@ class EvidenceService {
 
   /**
    * Retrieve the latest evidence evaluation for a case.
-   * If none exists yet, automatically generates and persists an initial baseline evaluation.
+   * If none exists yet, automatically generates and persists an initial baseline evaluation (with milestone).
    */
   static async getCaseEvidence(caseId) {
     // 1. Verify case exists
@@ -69,7 +92,7 @@ class EvidenceService {
     // 2. Check for existing evaluation snapshot
     const latestSnapshot = await EvidenceModel.findLatestByCaseId(caseId);
     if (!latestSnapshot) {
-      // Run initial baseline evaluation if no snapshot exists yet
+      // Run initial baseline evaluation if no snapshot exists yet (generates snapshot and milestone in transaction)
       return this.evaluateCaseEvidence(caseId);
     }
 

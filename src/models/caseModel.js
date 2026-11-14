@@ -3,10 +3,14 @@ const pool = require('../config/db');
 /**
  * Data Access Model for Cases.
  * Uses parameterized queries to prevent SQL injection.
+ * Supports optional transaction connections while preserving pool fallback.
  */
 class CaseModel {
   /**
    * Create a new consumer case record.
+   *
+   * @param {object} caseData
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
   static async createCase({
     title,
@@ -15,7 +19,8 @@ class CaseModel {
     claimed_amount,
     user_narrative,
     status = 'PENDING',
-  }) {
+  }, connection = null) {
+    const client = connection || pool;
     const query = `
       INSERT INTO cases (
         title,
@@ -36,16 +41,20 @@ class CaseModel {
       status,
     ];
 
-    const [result] = await pool.query(query, params);
+    const [result] = await client.query(query, params);
     const insertedId = result.insertId;
 
-    return this.findById(insertedId);
+    return this.findById(insertedId, connection);
   }
 
   /**
    * Find a single case by its primary ID.
+   *
+   * @param {string|number} id
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async findById(id) {
+  static async findById(id, connection = null) {
+    const client = connection || pool;
     const query = `
       SELECT
         id,
@@ -62,14 +71,18 @@ class CaseModel {
       LIMIT 1
     `;
 
-    const [rows] = await pool.query(query, [id]);
+    const [rows] = await client.query(query, [id]);
     return rows.length > 0 ? rows[0] : null;
   }
 
   /**
    * Find all cases matching optional filters with pagination.
+   *
+   * @param {object} options
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async findAll({ page = 1, limit = 10, status, issue_category } = {}) {
+  static async findAll({ page = 1, limit = 10, status, issue_category } = {}, connection = null) {
+    const client = connection || pool;
     const whereClauses = [];
     const queryParams = [];
 
@@ -87,7 +100,7 @@ class CaseModel {
 
     // 1. Get total matching count
     const countQuery = `SELECT COUNT(*) AS total FROM cases ${whereSql}`;
-    const [countResult] = await pool.query(countQuery, queryParams);
+    const [countResult] = await client.query(countQuery, queryParams);
     const total = countResult[0].total;
 
     // 2. Fetch paginated slice
@@ -109,9 +122,7 @@ class CaseModel {
       LIMIT ? OFFSET ?
     `;
 
-    // mysql2 handles numeric limit/offset cleanly when passed as numbers
-    const [cases] = await pool.query(dataQuery, [...queryParams, Number(limit), Number(offset)]);
-
+    const [cases] = await client.query(dataQuery, [...queryParams, Number(limit), Number(offset)]);
     const totalPages = Math.ceil(total / limit) || 1;
 
     return {
@@ -129,11 +140,16 @@ class CaseModel {
 
   /**
    * Update permitted fields of an existing case by its ID.
+   *
+   * @param {string|number} id
+   * @param {object} fields
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async updateById(id, fields) {
+  static async updateById(id, fields, connection = null) {
+    const client = connection || pool;
     const fieldEntries = Object.entries(fields);
     if (fieldEntries.length === 0) {
-      return this.findById(id);
+      return this.findById(id, connection);
     }
 
     const setClauses = [];
@@ -147,15 +163,19 @@ class CaseModel {
     params.push(id);
     const query = `UPDATE cases SET ${setClauses.join(', ')} WHERE id = ?`;
 
-    await pool.query(query, params);
-    return this.findById(id);
+    await client.query(query, params);
+    return this.findById(id, connection);
   }
 
   /**
    * Delete a case by ID (helper primarily for test cleanup).
+   *
+   * @param {string|number} id
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async deleteById(id) {
-    const [result] = await pool.query('DELETE FROM cases WHERE id = ?', [id]);
+  static async deleteById(id, connection = null) {
+    const client = connection || pool;
+    const [result] = await client.query('DELETE FROM cases WHERE id = ?', [id]);
     return result.affectedRows > 0;
   }
 }

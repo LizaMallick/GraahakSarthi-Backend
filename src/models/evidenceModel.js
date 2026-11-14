@@ -3,10 +3,14 @@ const pool = require('../config/db');
 /**
  * Data Access Model for Evidence Evaluations.
  * Persists and retrieves rule-based evidence strength snapshots.
+ * Supports optional transaction connections while preserving pool fallback.
  */
 class EvidenceModel {
   /**
    * Insert a new evidence evaluation snapshot into evidence_evaluations.
+   *
+   * @param {object} evalData
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
   static async createEvaluation({
     case_id,
@@ -15,7 +19,8 @@ class EvidenceModel {
     verified_proofs,
     missing_proofs,
     recommendations,
-  }) {
+  }, connection = null) {
+    const client = connection || pool;
     const query = `
       INSERT INTO evidence_evaluations (
         case_id,
@@ -34,16 +39,20 @@ class EvidenceModel {
 
     const params = [case_id, strength_score, strength_level, proofsJson, missingJson, recsJson];
 
-    const [result] = await pool.query(query, params);
+    const [result] = await client.query(query, params);
     const insertedId = result.insertId;
 
-    return this.findById(insertedId);
+    return this.findById(insertedId, connection);
   }
 
   /**
    * Find an evaluation record by its primary ID.
+   *
+   * @param {string|number} id
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async findById(id) {
+  static async findById(id, connection = null) {
+    const client = connection || pool;
     const query = `
       SELECT
         id,
@@ -59,7 +68,7 @@ class EvidenceModel {
       LIMIT 1
     `;
 
-    const [rows] = await pool.query(query, [id]);
+    const [rows] = await client.query(query, [id]);
     if (rows.length === 0) return null;
 
     return this._formatRow(rows[0]);
@@ -67,8 +76,12 @@ class EvidenceModel {
 
   /**
    * Retrieve the most recent evaluation snapshot for a case.
+   *
+   * @param {string|number} case_id
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async findLatestByCaseId(case_id) {
+  static async findLatestByCaseId(case_id, connection = null) {
+    const client = connection || pool;
     const query = `
       SELECT
         id,
@@ -85,7 +98,7 @@ class EvidenceModel {
       LIMIT 1
     `;
 
-    const [rows] = await pool.query(query, [case_id]);
+    const [rows] = await client.query(query, [case_id]);
     if (rows.length === 0) return null;
 
     return this._formatRow(rows[0]);
@@ -93,8 +106,12 @@ class EvidenceModel {
 
   /**
    * Retrieve all evaluation snapshots for a case.
+   *
+   * @param {string|number} case_id
+   * @param {import('mysql2/promise').Connection|null} [connection=null]
    */
-  static async findByCaseId(case_id) {
+  static async findByCaseId(case_id, connection = null) {
+    const client = connection || pool;
     const query = `
       SELECT
         id,
@@ -110,7 +127,7 @@ class EvidenceModel {
       ORDER BY created_at DESC, id DESC
     `;
 
-    const [rows] = await pool.query(query, [case_id]);
+    const [rows] = await client.query(query, [case_id]);
     return rows.map((r) => this._formatRow(r));
   }
 
